@@ -471,6 +471,12 @@ void RNA_property_update_main(Main *bmain, Scene *scene, PointerRNA *ptr, Proper
  * but this isn't likely to be a performance problem.
  */
 bool RNA_property_update_check(PropertyRNA *prop);
+/**
+ * Like #RNA_property_update_check, but also considers the owner of the property: ID properties
+ * of Python registered nodes need an update so that node tree evaluation (e.g. the compositor)
+ * reruns, like it does for built-in node properties.
+ */
+bool RNA_property_update_check_ex(const PointerRNA *ptr, PropertyRNA *prop);
 
 /* Property Data */
 

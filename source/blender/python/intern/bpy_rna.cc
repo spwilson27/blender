@@ -626,7 +626,7 @@ static int mathutils_rna_vector_set(BaseMathObject *bmo, int subtype)
   }
 
   RNA_property_float_set_array(&self->ptr.value(), self->prop, bmo->data);
-  if (RNA_property_update_check(self->prop)) {
+  if (RNA_property_update_check_ex(&self->ptr.value(), self->prop)) {
     RNA_property_update(BPY_context_get(), &self->ptr.value(), self->prop);
   }
 
@@ -638,7 +638,7 @@ static int mathutils_rna_vector_set(BaseMathObject *bmo, int subtype)
         &self->ptr.value(), eul->order, &prop_eul_order);
     if (order != eul->order) {
       RNA_property_enum_set(&self->ptr.value(), prop_eul_order, eul->order);
-      if (RNA_property_update_check(prop_eul_order)) {
+      if (RNA_property_update_check_ex(&self->ptr.value(), prop_eul_order)) {
         RNA_property_update(BPY_context_get(), &self->ptr.value(), prop_eul_order);
       }
     }
@@ -687,7 +687,7 @@ static int mathutils_rna_vector_set_index(BaseMathObject *bmo, int /*subtype*/, 
   RNA_property_float_clamp(&self->ptr.value(), self->prop, &bmo->data[index]);
   RNA_property_float_set_index(&self->ptr.value(), self->prop, index, bmo->data[index]);
 
-  if (RNA_property_update_check(self->prop)) {
+  if (RNA_property_update_check_ex(&self->ptr.value(), self->prop)) {
     RNA_property_update(BPY_context_get(), &self->ptr.value(), self->prop);
   }
 
@@ -746,7 +746,7 @@ static int mathutils_rna_matrix_set(BaseMathObject *bmo, int /*subtype*/)
   /* Can ignore clamping here. */
   RNA_property_float_set_array(&self->ptr.value(), self->prop, bmo->data);
 
-  if (RNA_property_update_check(self->prop)) {
+  if (RNA_property_update_check_ex(&self->ptr.value(), self->prop)) {
     RNA_property_update(BPY_context_get(), &self->ptr.value(), self->prop);
   }
   return 0;
@@ -2236,7 +2236,7 @@ static int pyrna_py_to_prop(
   }
 
   /* Run RNA property functions. */
-  if (RNA_property_update_check(prop)) {
+  if (RNA_property_update_check_ex(ptr, prop)) {
     RNA_property_update(BPY_context_get(), ptr, prop);
   }
 
@@ -2314,7 +2314,7 @@ static int pyrna_py_to_prop_array_index(BPy_PropertyArrayRNA *self, int index, P
   }
 
   /* Run RNA property functions. */
-  if (RNA_property_update_check(prop)) {
+  if (RNA_property_update_check_ex(ptr, prop)) {
     RNA_property_update(BPY_context_get(), ptr, prop);
   }
 
@@ -3489,7 +3489,7 @@ static int pyrna_prop_array_ass_subscript(BPy_PropertyArrayRNA *self,
   }
 
   if (ret != -1) {
-    if (RNA_property_update_check(self->prop)) {
+    if (RNA_property_update_check_ex(&self->ptr.value(), self->prop)) {
       RNA_property_update(BPY_context_get(), &self->ptr.value(), self->prop);
     }
   }

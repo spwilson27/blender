@@ -42,7 +42,9 @@
 #include "BKE_lib_override.hh"
 #include "BKE_library.hh"
 #include "BKE_main.hh"
+#include "BKE_main_invariants.hh"
 #include "BKE_node.hh"
+#include "BKE_node_tree_update.hh"
 #include "BKE_report.hh"
 
 #include "CLG_log.h"
@@ -54,6 +56,7 @@
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 #include "RNA_path.hh"
+#include "RNA_prototypes.hh"
 #include "RNA_types.hh"
 
 #include "UI_resources.hh"
@@ -2471,6 +2474,16 @@ bool RNA_property_path_from_ID_check(PointerRNA *ptr, PropertyRNA *prop)
   return ret;
 }
 
+/**
+ * True for ID properties of nodes, which is how properties of Python registered nodes are stored.
+ * \param prop: Must already be resolved with #rna_ensure_property.
+ */
+static bool rna_property_is_node_idproperty(const PointerRNA *ptr, const PropertyRNA *prop)
+{
+  return (prop->flag & PROP_IDPROPERTY) != 0 && ptr->owner_id != nullptr &&
+         GS(ptr->owner_id->name) == ID_NT && RNA_struct_is_a(ptr->type, RNA_Node);
+}
+
 static void rna_property_update(
     bContext *C, Main *bmain, Scene *scene, PointerRNA *ptr, PropertyRNA *prop)
 {
@@ -2561,6 +2574,14 @@ static void rna_property_update(
         (GS(ptr->owner_id->name) == ID_NT))
     {
       WM_main_add_notifier(NC_MATERIAL | ND_SHADING, nullptr);
+
+      /* Properties of Python registered nodes, tag the node like #rna_Node_update does for
+       * built-in node properties, so that node tree evaluation (e.g. the compositor) reruns. */
+      if (bmain != nullptr && rna_property_is_node_idproperty(ptr, prop)) {
+        bNodeTree *ntree = reinterpret_cast<bNodeTree *>(ptr->owner_id);
+        BKE_ntree_update_tag_node_property(ntree, ptr->data_as<bNode>());
+        BKE_main_ensure_invariants(*bmain, ntree->id);
+      }
     }
   }
 }
@@ -2569,6 +2590,12 @@ bool RNA_property_update_check(PropertyRNA *prop)
 {
   /* NOTE: must keep in sync with #rna_property_update. */
   return (prop->magic != RNA_MAGIC || prop->update || prop->noteflag);
+}
+
+bool RNA_property_update_check_ex(const PointerRNA *ptr, PropertyRNA *prop)
+{
+  return RNA_property_update_check(prop) ||
+         rna_property_is_node_idproperty(ptr, rna_ensure_property(prop));
 }
 
 void RNA_property_update(bContext *C, PointerRNA *ptr, PropertyRNA *prop)
