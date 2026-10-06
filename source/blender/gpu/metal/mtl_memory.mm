@@ -62,6 +62,16 @@ MTLBufferPool::~MTLBufferPool()
   this->free();
 }
 
+/* Delete the given safe list and all the chunks that were chained to it when it overflowed. */
+void MTLSafeFreeList::delete_chain(MTLSafeFreeList *safe_list)
+{
+  while (safe_list != nullptr) {
+    MTLSafeFreeList *next_list = safe_list->next_.load();
+    delete safe_list;
+    safe_list = next_list;
+  }
+}
+
 void MTLBufferPool::free()
 {
   buffer_pool_lock_.lock();
@@ -73,17 +83,17 @@ void MTLBufferPool::free()
   for (int safe_pool_free_index = 0; safe_pool_free_index < completed_safelist_queue_.size();
        safe_pool_free_index++)
   {
-    delete completed_safelist_queue_[safe_pool_free_index];
+    MTLSafeFreeList::delete_chain(completed_safelist_queue_[safe_pool_free_index]);
   }
   completed_safelist_queue_.clear();
 
   safelist_lock_.lock();
   if (current_free_list_ != nullptr) {
-    delete current_free_list_;
+    MTLSafeFreeList::delete_chain(current_free_list_);
     current_free_list_ = nullptr;
   }
   if (prev_free_buffer_list_ != nullptr) {
-    delete prev_free_buffer_list_;
+    MTLSafeFreeList::delete_chain(prev_free_buffer_list_);
     prev_free_buffer_list_ = nullptr;
   }
   safelist_lock_.unlock();

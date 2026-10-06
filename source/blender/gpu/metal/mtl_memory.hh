@@ -324,6 +324,9 @@ class MTLSafeFreeList {
    * amount of threading synchronization. */
   void insert_buffer(gpu::MTLBuffer *buffer);
 
+  /* Delete the list and all the chunks that were chained to it when it overflowed. */
+  static void delete_chain(MTLSafeFreeList *safe_list);
+
   /* Whether we need to start a new safe free list, or can carry on using the existing one. */
   bool should_flush();
 
