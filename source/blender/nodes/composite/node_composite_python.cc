@@ -18,6 +18,8 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "DNA_scene_types.h"
+
 #include "GPU_shader.hh"
 #include "GPU_state.hh"
 #include "GPU_texture.hh"
@@ -49,6 +51,7 @@ namespace blender::nodes::node_composite_python_cc {
 
 using namespace blender::compositor;
 using compositor_python::Callbacks;
+using compositor_python::EvalInfo;
 using compositor_python::EvalMode;
 using compositor_python::SocketValue;
 
@@ -135,6 +138,87 @@ static void set_input_buffer(SocketValue &value, const Result &cpu_result)
   value.sharing = ImplicitSharingPtr<>(implicit_sharing::info_for_mem_free(copy));
 }
 
+/* The number of channels of a single value of a supported type. */
+static int single_value_channels(const ResultType type)
+{
+  switch (type) {
+    case ResultType::Float2:
+    case ResultType::Int2:
+      return 2;
+    case ResultType::Float3:
+      return 3;
+    case ResultType::Float4:
+    case ResultType::Color:
+      return 4;
+    default:
+      return 1;
+  }
+}
+
+/* A single value output that Python writes to, and the output that the value is stored in after
+ * the evaluation. */
+struct SingleValueOutput {
+  Result *output;
+  /* The zero initialized storage of the value, kept alive in case Python retains the buffer. */
+  ImplicitSharingPtr<> storage;
+  void *data;
+};
+
+/* Create the writable one dimensional buffer that Python writes a single value output to. */
+static SingleValueOutput create_single_value_output(SocketValue &value, Result &output)
+{
+  /* Large enough for four values of 32 bits. */
+  constexpr int64_t storage_size = 4 * sizeof(float);
+  void *data = MEM_new_uninitialized(storage_size, __func__);
+  memset(data, 0, storage_size);
+
+  value.kind = SocketValue::Kind::Buffer;
+  value.is_single_value = true;
+  value.data = data;
+  value.channels = single_value_channels(output.type());
+  value.writable = true;
+  value.sharing = ImplicitSharingPtr<>(implicit_sharing::info_for_mem_free(data));
+  return {&output, value.sharing, data};
+}
+
+/* Allocate the output as a single value that is set to the value written by Python. */
+static void store_single_value_output(const SingleValueOutput &single_output)
+{
+  Result &output = *single_output.output;
+  const float *floats = static_cast<const float *>(single_output.data);
+  const int *ints = static_cast<const int *>(single_output.data);
+  output.allocate_single_value();
+  switch (output.type()) {
+    case ResultType::Float:
+      output.set_single_value(floats[0]);
+      break;
+    case ResultType::Float2:
+      output.set_single_value(float2(floats[0], floats[1]));
+      break;
+    case ResultType::Float3:
+      output.set_single_value(float3(floats[0], floats[1], floats[2]));
+      break;
+    case ResultType::Float4:
+      output.set_single_value(float4(floats[0], floats[1], floats[2], floats[3]));
+      break;
+    case ResultType::Color:
+      output.set_single_value(Color(floats[0], floats[1], floats[2], floats[3]));
+      break;
+    case ResultType::Int:
+      output.set_single_value(int32_t(ints[0]));
+      break;
+    case ResultType::Int2:
+      output.set_single_value(int2(ints[0], ints[1]));
+      break;
+    case ResultType::Bool:
+      output.set_single_value(*static_cast<const bool *>(single_output.data));
+      break;
+    default:
+      BLI_assert_unreachable();
+      break;
+  }
+}
+
 /* A temporary CPU result that Python writes to, and the output that its data is passed to after
  * the evaluation. */
 struct TemporaryOutput {
@@ -172,7 +256,48 @@ class PythonNodeOperation : public NodeOperation {
     }
   }
 
+ public:
+  Domain compute_domain() override
+  {
+    /* The base implementation returns the identity domain if there is no image input to take the
+     * domain from. Python nodes without such inputs are generators, so they use the compositing
+     * domain instead. Mirror the criteria of the base implementation to detect that case. */
+    bool has_domain_input = false;
+    for (const bNodeSocket *socket : this->node().input_sockets()) {
+      if (!is_socket_available(socket)) {
+        continue;
+      }
+      const Result &input = this->get_input(socket->identifier);
+      const InputDescriptor &descriptor = this->get_input_descriptor(socket->identifier);
+      if (input.is_single_value() || descriptor.expects_single_value) {
+        continue;
+      }
+      if (descriptor.realization_mode != InputRealizationMode::OperationDomain) {
+        continue;
+      }
+      has_domain_input = true;
+      break;
+    }
+
+    if (!has_domain_input) {
+      return this->context().get_compositing_domain();
+    }
+    return NodeOperation::compute_domain();
+  }
+
  private:
+  EvalInfo get_eval_info(const Domain &domain) const
+  {
+    const RenderData &render_data = this->context().get_render_data();
+    EvalInfo info;
+    info.frame = float(render_data.cfra) + render_data.subframe;
+    info.fps = float(render_data.frs_sec) / render_data.frs_sec_base;
+    info.time = info.fps != 0.0f ? info.frame / info.fps : 0.0f;
+    info.size = domain.data_size;
+    info.use_gpu = this->context().use_gpu();
+    return info;
+  }
+
   void report_message(const StringRef message) const
   {
     this->context().set_info_message(std::string(this->node().name) + ": " + std::string(message));
@@ -211,6 +336,7 @@ class PythonNodeOperation : public NodeOperation {
     }
 
     Vector<TemporaryOutput> temporary_outputs;
+    Vector<SingleValueOutput> single_value_outputs;
     Vector<SocketValue> outputs;
     for (const bNodeSocket *socket : this->node().output_sockets()) {
       if (!is_socket_available(socket)) {
@@ -227,6 +353,12 @@ class PythonNodeOperation : public NodeOperation {
       value.type = output.type();
       if (!is_supported_image_type(output.type())) {
         output.allocate_invalid();
+        outputs.append(std::move(value));
+        continue;
+      }
+
+      if (callbacks.is_single_value_output(*this->node().typeinfo, socket->identifier)) {
+        single_value_outputs.append(create_single_value_output(value, output));
         outputs.append(std::move(value));
         continue;
       }
@@ -250,7 +382,14 @@ class PythonNodeOperation : public NodeOperation {
     }
 
     std::string error;
-    const bool success = callbacks.evaluate(this->node(), EvalMode::CPU, inputs, outputs, error);
+    const bool success = callbacks.evaluate(
+        this->node(), EvalMode::CPU, inputs, outputs, this->get_eval_info(domain), error);
+
+    if (success) {
+      for (const SingleValueOutput &single_output : single_value_outputs) {
+        store_single_value_output(single_output);
+      }
+    }
 
     for (TemporaryOutput &temporary_output : temporary_outputs) {
       if (success) {
@@ -303,6 +442,7 @@ class PythonNodeOperation : public NodeOperation {
     }
 
     Vector<Result *> allocated_outputs;
+    Vector<SingleValueOutput> single_value_outputs;
     Vector<SocketValue> outputs;
     for (const bNodeSocket *socket : this->node().output_sockets()) {
       if (!is_socket_available(socket)) {
@@ -323,6 +463,12 @@ class PythonNodeOperation : public NodeOperation {
         continue;
       }
 
+      if (callbacks.is_single_value_output(*this->node().typeinfo, socket->identifier)) {
+        single_value_outputs.append(create_single_value_output(value, output));
+        outputs.append(std::move(value));
+        continue;
+      }
+
       output.allocate_texture(domain);
       this->clear_output(output);
       allocated_outputs.append(&output);
@@ -333,7 +479,8 @@ class PythonNodeOperation : public NodeOperation {
     }
 
     std::string error;
-    const bool success = callbacks.evaluate(this->node(), EvalMode::GPU, inputs, outputs, error);
+    const bool success = callbacks.evaluate(
+        this->node(), EvalMode::GPU, inputs, outputs, this->get_eval_info(domain), error);
 
     /* Python is expected to leave no shader bound, but make sure that is the case, and that the
      * writes to the output textures are visible to the operations that consume them. */
@@ -343,7 +490,12 @@ class PythonNodeOperation : public NodeOperation {
     GPU_memory_barrier(GPU_BARRIER_TEXTURE_FETCH | GPU_BARRIER_SHADER_IMAGE_ACCESS |
                        GPU_BARRIER_TEXTURE_UPDATE);
 
-    if (!success) {
+    if (success) {
+      for (const SingleValueOutput &single_output : single_value_outputs) {
+        store_single_value_output(single_output);
+      }
+    }
+    else {
       /* Python might have partially written the outputs, so go back to the default. */
       for (Result *output : allocated_outputs) {
         this->clear_output(*output);

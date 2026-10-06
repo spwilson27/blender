@@ -132,7 +132,8 @@ static PyGetSetDef compositor_buffer_getseters[] = {
      compositor_buffer_shape_get,
      nullptr,
      "The shape of the buffer, (height, width, channels) or (height, width) if it has a single "
-     "channel. Row 0 is at the bottom of the image.",
+     "channel. Row 0 is at the bottom of the image. Single value outputs have the shape "
+     "(channels,).",
      nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
@@ -183,15 +184,23 @@ static PyObject *compositor_buffer_create(const SocketValue &value)
   self->data = value.data;
   self->readonly = !value.writable;
 
-  /* Row 0 is the bottom row, matching the layout of the compositor. */
-  self->shape[0] = value.size.y;
-  self->shape[1] = value.size.x;
-  if (value.channels == 1) {
+  if (value.is_single_value) {
+    /* A single value, with one dimension that is the channels. */
+    self->ndim = 1;
+    self->shape[0] = value.channels;
+    self->strides[0] = self->itemsize;
+  }
+  else if (value.channels == 1) {
+    /* Row 0 is the bottom row, matching the layout of the compositor. */
+    self->shape[0] = value.size.y;
+    self->shape[1] = value.size.x;
     self->ndim = 2;
     self->strides[1] = self->itemsize;
     self->strides[0] = self->strides[1] * self->shape[1];
   }
   else {
+    self->shape[0] = value.size.y;
+    self->shape[1] = value.size.x;
     self->ndim = 3;
     self->shape[2] = value.channels;
     self->strides[2] = self->itemsize;
@@ -231,6 +240,138 @@ static bool compositor_has_method(const bke::bNodeType &ntype, const EvalMode mo
   PyGILState_Release(gilstate);
 
   return has_method;
+}
+
+static bool compositor_is_single_value_output(const bke::bNodeType &ntype,
+                                              const StringRefNull identifier)
+{
+  if (ntype.rna_ext.data == nullptr) {
+    return false;
+  }
+
+  PyGILState_STATE gilstate = PyGILState_Ensure();
+  PyObject *cls = static_cast<PyObject *>(ntype.rna_ext.data);
+  bool found = false;
+  PyObject *names = PyObject_GetAttrString(cls, "single_value_outputs");
+  if (names) {
+    PyObject *py_identifier = PyUnicode_FromString(identifier.c_str());
+    if (py_identifier) {
+      /* Works for any iterable, such as a set, tuple or list. */
+      PyObject *iterator = PyObject_GetIter(names);
+      if (iterator) {
+        while (PyObject *item = PyIter_Next(iterator)) {
+          const int equal = PyObject_RichCompareBool(item, py_identifier, Py_EQ);
+          Py_DECREF(item);
+          if (equal == 1) {
+            found = true;
+            break;
+          }
+        }
+        Py_DECREF(iterator);
+      }
+      Py_DECREF(py_identifier);
+    }
+    Py_DECREF(names);
+  }
+  /* A missing attribute or an invalid value is not an error. */
+  PyErr_Clear();
+  PyGILState_Release(gilstate);
+
+  return found;
+}
+
+/** Returns true if the function takes the context as its 4th positional parameter. */
+static bool function_accepts_context(PyObject *func)
+{
+  /* Unwrap bound methods, the bound object is not counted. */
+  int bound_args = 0;
+  PyObject *owned = nullptr;
+  if (PyMethod_Check(func)) {
+    PyObject *inner = PyMethod_GET_FUNCTION(func);
+    bound_args = 1;
+    func = inner;
+  }
+  else if (PyObject_TypeCheck(func, &PyStaticMethod_Type) ||
+           PyObject_TypeCheck(func, &PyClassMethod_Type))
+  {
+    owned = PyObject_GetAttrString(func, "__func__");
+    if (!owned) {
+      PyErr_Clear();
+      return false;
+    }
+    func = owned;
+  }
+
+  bool result = false;
+  PyObject *code = PyObject_GetAttrString(func, "__code__");
+  if (code) {
+    PyObject *argcount = PyObject_GetAttrString(code, "co_argcount");
+    PyObject *flags = PyObject_GetAttrString(code, "co_flags");
+    PyObject *varnames = PyObject_GetAttrString(code, "co_varnames");
+    PyObject *defaults = PyObject_GetAttrString(func, "__defaults__");
+    if (argcount && flags && varnames) {
+      const long count = PyLong_AsLong(argcount);
+      const long code_flags = PyLong_AsLong(flags);
+      /* Index of the parameter that would receive the context, `self` counted when bound. */
+      const long index = bound_args + 2;
+      if (count > index) {
+        const long defaults_num = (defaults && PyTuple_Check(defaults)) ?
+                                      long(PyTuple_GET_SIZE(defaults)) :
+                                      0;
+        const bool has_default = index >= count - defaults_num;
+        PyObject *name = PyTuple_Check(varnames) ? PyTuple_GetItem(varnames, index) : nullptr;
+        const bool is_named_context = name && PyUnicode_Check(name) &&
+                                      PyUnicode_CompareWithASCIIString(name, "context") == 0;
+        /* A defaulted parameter with another name, like `_orig=_orig`, is not for the context. */
+        result = is_named_context || !has_default;
+      }
+      else {
+        result = (code_flags & CO_VARARGS) != 0;
+      }
+    }
+    Py_XDECREF(argcount);
+    Py_XDECREF(flags);
+    Py_XDECREF(varnames);
+    Py_XDECREF(defaults);
+    Py_DECREF(code);
+  }
+  Py_XDECREF(owned);
+  PyErr_Clear();
+  return result;
+}
+
+static PyObject *eval_info_to_py(const compositor_python::EvalInfo &info)
+{
+  PyObject *types = PyImport_ImportModule("types");
+  if (!types) {
+    return nullptr;
+  }
+  PyObject *ns_type = PyObject_GetAttrString(types, "SimpleNamespace");
+  Py_DECREF(types);
+  if (!ns_type) {
+    return nullptr;
+  }
+  PyObject *kwargs = Py_BuildValue("{s:d,s:d,s:d,s:(ii),s:O}",
+                                   "frame",
+                                   double(info.frame),
+                                   "fps",
+                                   double(info.fps),
+                                   "time",
+                                   double(info.time),
+                                   "size",
+                                   info.size.x,
+                                   info.size.y,
+                                   "use_gpu",
+                                   info.use_gpu ? Py_True : Py_False);
+  PyObject *result = nullptr;
+  if (kwargs) {
+    PyObject *args = PyTuple_New(0);
+    result = PyObject_Call(ns_type, args, kwargs);
+    Py_DECREF(args);
+    Py_DECREF(kwargs);
+  }
+  Py_DECREF(ns_type);
+  return result;
 }
 
 static PyObject *tuple_from_floats(const float *values, const int length)
@@ -343,6 +484,7 @@ static bool compositor_evaluate(const bNode &node,
                                 const EvalMode mode,
                                 const Span<SocketValue> inputs,
                                 const Span<SocketValue> outputs,
+                                const compositor_python::EvalInfo &info,
                                 std::string &r_error)
 {
   PyGILState_STATE gilstate = PyGILState_Ensure();
@@ -368,8 +510,21 @@ static bool compositor_evaluate(const bNode &node,
       py_outputs = socket_values_to_dict(outputs);
     }
     if (py_outputs) {
-      py_result = PyObject_CallMethod(
-          self, evaluate_method_name(mode), "OO", py_inputs, py_outputs);
+      PyObject *method = PyObject_GetAttrString(self, evaluate_method_name(mode));
+      if (method) {
+        if (function_accepts_context(method)) {
+          PyObject *py_context = eval_info_to_py(info);
+          if (py_context) {
+            py_result = PyObject_CallFunctionObjArgs(
+                method, py_inputs, py_outputs, py_context, nullptr);
+            Py_DECREF(py_context);
+          }
+        }
+        else {
+          py_result = PyObject_CallFunctionObjArgs(method, py_inputs, py_outputs, nullptr);
+        }
+        Py_DECREF(method);
+      }
     }
   }
 
@@ -398,6 +553,7 @@ static bool compositor_evaluate(const bNode &node,
 
 static const compositor_python::Callbacks g_callbacks = {
     /*has_method*/ compositor_has_method,
+    /*is_single_value_output*/ compositor_is_single_value_output,
     /*evaluate*/ compositor_evaluate,
 };
 

@@ -20,6 +20,8 @@
  * \code{.py}
  * def evaluate_cpu(self, inputs, outputs): ...
  * def evaluate_gpu(self, inputs, outputs): ...
+ * # Either may optionally take a fourth `context` parameter, see below.
+ * def evaluate_cpu(self, inputs, outputs, context): ...
  * \endcode
  *
  * - `evaluate_gpu` is used when the compositor is evaluating on the GPU and the class defines it.
@@ -36,9 +38,10 @@
  *   vectors and colors.
  * - Image inputs are passed as buffer objects supporting the buffer protocol (CPU, use
  *   `numpy.asarray`) or as `gpu.types.GPUTexture` (GPU).
- * - Outputs are always images allocated over the compute domain of the operation. They are zero
- *   initialized before the method is called. Writing to them is done through the writable buffer
- *   or by binding the texture as an image.
+ * - Outputs are images allocated over the compute domain of the operation, except for the outputs
+ *   listed in `single_value_outputs`, see below. They are zero initialized before the method is
+ *   called. Writing to them is done through the writable buffer or by binding the texture as an
+ *   image.
  * - Buffers are C-contiguous with shape `(height, width, channels)`, or `(height, width)` for a
  *   single channel, with row 0 at the bottom. Float types use format `f`, integer types `i` and
  *   booleans `?`.
@@ -48,6 +51,43 @@
  *   is reported as the info message of the compositor.
  * - Buffers and textures that were retained by Python remain memory safe, but their contents are
  *   undefined once the method returns.
+ *
+ * Generator domain
+ * ----------------
+ *
+ * The compute domain is the domain of the image input with the highest domain priority. If the
+ * node has no image inputs, that is, every input is unlinked or a single value, the compute domain
+ * is the compositing domain (the render resolution) instead of a 1x1 domain.
+ *
+ * Evaluation context
+ * ------------------
+ *
+ * If the 4th positional parameter of `evaluate_cpu` / `evaluate_gpu` (counting `self`) is named
+ * `context`, has no default value (is required), or the function takes `*args`, a fourth argument
+ * is passed, a `types.SimpleNamespace` with the attributes:
+ *
+ * - `frame`: float, the scene frame including the subframe.
+ * - `fps`: float, `frs_sec / frs_sec_base` of the scene.
+ * - `time`: float, `frame / fps`, in seconds (not offset by the start frame).
+ * - `size`: tuple `(width, height)` of the compute domain in pixels.
+ * - `use_gpu`: bool, true if the compositor evaluates on the GPU (regardless of which method is
+ *   called).
+ *
+ * Methods with three parameters are called exactly as before, and so are methods whose 4th
+ * parameter has a default value and another name (for example `_orig=_orig`), which keeps its
+ * default. The parameters are read from `__code__` and `__defaults__` of the function, bound
+ * methods are unwrapped.
+ *
+ * Single value outputs
+ * --------------------
+ *
+ * The class attribute `single_value_outputs` can be an iterable of output socket identifiers.
+ * Those outputs are single values instead of images (and have no domain). In both the CPU and GPU
+ * evaluation, Python receives a writable `bpy_compositor.Buffer` of shape `(channels,)` for them
+ * (never a texture), zero initialized, with format `f` for float and color types, `i` for integer
+ * types and `?` for booleans. When the method returns successfully, the values are stored as the
+ * single value of the output (Float, Float2, Float3, Float4, Color, Int, Int2 and Bool). If the
+ * method raises, the outputs have the default value. Unneeded outputs are omitted as usual.
  */
 
 #pragma once
@@ -81,6 +121,20 @@ enum class EvalMode {
   GPU,
 };
 
+/** Information about the evaluation, passed as the `context` argument to Python. */
+struct EvalInfo {
+  /* The scene frame including the subframe. */
+  float frame = 0.0f;
+  /* Frames per second of the scene. */
+  float fps = 24.0f;
+  /* Time in seconds, `frame / fps`. */
+  float time = 0.0f;
+  /* Size of the compute domain. */
+  int2 size = int2(0);
+  /* Whether the compositor evaluates on the GPU. */
+  bool use_gpu = false;
+};
+
 /** A value passed to, or retrieved from, the Python evaluation function of a node. */
 struct SocketValue {
   enum class Kind {
@@ -106,6 +160,9 @@ struct SocketValue {
 
   /* Kind::Buffer. */
   void *data = nullptr;
+  /* The buffer holds a single value, so it has the one dimensional shape `(channels,)` and `size`
+   * is ignored. */
+  bool is_single_value = false;
   int2 size = int2(0);
   int channels = 0;
   bool writable = false;
@@ -121,6 +178,11 @@ struct Callbacks {
   /** Check if the Python class of the given node type defines the method for the given mode. */
   bool (*has_method)(const bke::bNodeType &ntype, EvalMode mode);
   /**
+   * Check if the Python class of the given node type lists the given output identifier in its
+   * `single_value_outputs` attribute.
+   */
+  bool (*is_single_value_output)(const bke::bNodeType &ntype, StringRefNull identifier);
+  /**
    * Call the method of the given mode. Returns false and fills `r_error` if Python raised an
    * exception. Both spans contain one entry per available input/output socket respectively.
    */
@@ -128,6 +190,7 @@ struct Callbacks {
                    EvalMode mode,
                    Span<SocketValue> inputs,
                    Span<SocketValue> outputs,
+                   const EvalInfo &info,
                    std::string &r_error);
 };
 
