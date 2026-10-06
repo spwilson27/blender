@@ -130,6 +130,17 @@ static bool bpy_context_set_ex(bContext *C,
                                const bool allow_null_context)
 {
   bool context_set = false;
+
+  /* Other threads (e.g. the compositor evaluating Python nodes during a render) only need the GIL.
+   * The call level and the context are main thread state, and modifying them here would race with
+   * the main thread, see #bpy_context_clear. */
+  if (!BLI_thread_is_main()) {
+    if (gilstate) {
+      *gilstate = PyGILState_Ensure();
+    }
+    return context_set;
+  }
+
   py_call_level++;
 
   if (gilstate) {
@@ -175,6 +186,14 @@ bool bpy_context_set_allow_null(bContext *C, PyGILState_STATE *gilstate)
 
 void bpy_context_clear(bContext *C, const PyGILState_STATE *gilstate)
 {
+  /* Matches #bpy_context_set_ex, which leaves the call level untouched for other threads. */
+  if (!BLI_thread_is_main()) {
+    if (gilstate) {
+      PyGILState_Release(*gilstate);
+    }
+    return;
+  }
+
   py_call_level--;
 
   if (gilstate) {
