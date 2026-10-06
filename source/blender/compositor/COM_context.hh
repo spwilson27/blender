@@ -39,6 +39,18 @@ namespace blender::compositor {
  * providing input data like render passes and the active scene, as well as callbacks to write the
  * outputs of the compositor. Finally, the class have a reference to a static resource manager for
  * acquiring cached resources efficiently. */
+/* The kind of evaluation a compositor context performs, exposed to Python compositor nodes. */
+enum class EvaluationKind : uint8_t {
+  /* The render pipeline compositor (F12, command line render, render.render()). */
+  Render,
+  /* The interactive compositor job that draws the node editor backdrop. */
+  Backdrop,
+  /* The viewport compositor draw engine. */
+  Viewport,
+  /* The compositor modifier of a sequencer strip. */
+  Sequencer,
+};
+
 class Context {
  private:
   /* A static cache manager that can be used to acquire cached resources for the compositor
@@ -61,6 +73,13 @@ class Context {
 
   /* True if the compositor should use GPU acceleration. */
   virtual bool use_gpu() const = 0;
+
+  /* The kind of evaluation this context performs. */
+  virtual EvaluationKind get_evaluation_kind() const = 0;
+
+  /* True if the animation is currently playing in the UI. Always false for contexts that are not
+   * interactive. */
+  virtual bool is_animation_playing() const;
 
   /* Get the strip that the compositing modifier is applied to. */
   virtual const Strip *get_strip() const;

@@ -72,6 +72,16 @@
  * - `size`: tuple `(width, height)` of the compute domain in pixels.
  * - `use_gpu`: bool, true if the compositor evaluates on the GPU (regardless of which method is
  *   called).
+ * - `kind`: str, the kind of evaluation, derived from the compositor context:
+ *   `'RENDER'` (the render pipeline: F12, command line render, `render.render()`), `'BACKDROP'`
+ *   (the interactive compositor job of the node editor backdrop), `'VIEWPORT'` (the viewport
+ *   compositor draw engine) or `'SEQUENCER'` (the compositor modifier of a strip). Streams of
+ *   different kinds are interleaved, so stateful nodes should key their state by it.
+ * - `is_animation_playing`: bool, true if the animation is playing in the UI. For `'BACKDROP'` it
+ *   is the state when the job was scheduled (playback without scrubbing), for `'VIEWPORT'` it is
+ *   the state at draw time, for `'RENDER'` and `'SEQUENCER'` it is always false.
+ * - `frame_start`, `frame_end`: int, the render frame range (`scene.frame_start` / `frame_end`)
+ *   of the scene the compositor context evaluates.
  *
  * Methods with three parameters are called exactly as before, and so are methods whose 4th
  * parameter has a default value and another name (for example `_orig=_orig`), which keeps its
@@ -133,6 +143,13 @@ struct EvalInfo {
   int2 size = int2(0);
   /* Whether the compositor evaluates on the GPU. */
   bool use_gpu = false;
+  /* The kind of evaluation: "RENDER", "BACKDROP", "VIEWPORT" or "SEQUENCER". Static string. */
+  const char *kind = "RENDER";
+  /* Whether the animation is playing in the UI. */
+  bool is_animation_playing = false;
+  /* The render frame range of the evaluated scene. */
+  int frame_start = 1;
+  int frame_end = 250;
 };
 
 /** A value passed to, or retrieved from, the Python evaluation function of a node. */

@@ -539,8 +539,14 @@ Render *RE_NewInteractiveCompositorRender(const Scene *scene)
   return RenderGlobal.interactive_compositor_renders.lookup_or_add_cb(owner, [&]() {
     Render *render = MEM_new<Render>("New Interactive Compositor Render");
     render->owner = owner;
+    render->is_interactive_compositor = true;
     return render;
   });
+}
+
+void RE_compositor_animation_playing_set(Render *re, const bool is_playing)
+{
+  re->compositor_animation_playing = is_playing;
 }
 
 void RE_FreeRender(Render *re)

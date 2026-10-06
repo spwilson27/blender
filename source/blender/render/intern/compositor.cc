@@ -137,6 +137,19 @@ class Context : public compositor::Context {
     gpu_supported_ = supported;
   }
 
+  compositor::EvaluationKind get_evaluation_kind() const override
+  {
+    return input_data_.render && input_data_.render->is_interactive_compositor ?
+               compositor::EvaluationKind::Backdrop :
+               compositor::EvaluationKind::Render;
+  }
+
+  bool is_animation_playing() const override
+  {
+    return input_data_.render && input_data_.render->is_interactive_compositor &&
+           input_data_.render->compositor_animation_playing;
+  }
+
   bool use_gpu() const override
   {
     return gpu_supported_ &&

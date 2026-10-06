@@ -295,6 +295,23 @@ class PythonNodeOperation : public NodeOperation {
     info.time = info.fps != 0.0f ? info.frame / info.fps : 0.0f;
     info.size = domain.data_size;
     info.use_gpu = this->context().use_gpu();
+    switch (this->context().get_evaluation_kind()) {
+      case compositor::EvaluationKind::Render:
+        info.kind = "RENDER";
+        break;
+      case compositor::EvaluationKind::Backdrop:
+        info.kind = "BACKDROP";
+        break;
+      case compositor::EvaluationKind::Viewport:
+        info.kind = "VIEWPORT";
+        break;
+      case compositor::EvaluationKind::Sequencer:
+        info.kind = "SEQUENCER";
+        break;
+    }
+    info.is_animation_playing = this->context().is_animation_playing();
+    info.frame_start = this->context().get_scene().r.sfra;
+    info.frame_end = this->context().get_scene().r.efra;
     return info;
   }
 

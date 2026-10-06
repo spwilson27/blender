@@ -78,6 +78,8 @@ static void compositor_job_init(void *compositor_job_data)
                                                           scene->compositing_node_group);
 
   compositor_job->render = RE_NewInteractiveCompositorRender(scene);
+  RE_compositor_animation_playing_set(compositor_job->render,
+                                      compositor_job->is_animation_playing);
   if (scene->r.compositor_device == SCE_COMPOSITOR_DEVICE_GPU) {
     RE_display_ensure_gpu_context(compositor_job->render);
     IMB_ensure_gpu_context();

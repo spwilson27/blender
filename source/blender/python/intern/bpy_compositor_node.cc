@@ -351,7 +351,7 @@ static PyObject *eval_info_to_py(const compositor_python::EvalInfo &info)
   if (!ns_type) {
     return nullptr;
   }
-  PyObject *kwargs = Py_BuildValue("{s:d,s:d,s:d,s:(ii),s:O}",
+  PyObject *kwargs = Py_BuildValue("{s:d,s:d,s:d,s:(ii),s:O,s:s,s:O,s:i,s:i}",
                                    "frame",
                                    double(info.frame),
                                    "fps",
@@ -362,7 +362,15 @@ static PyObject *eval_info_to_py(const compositor_python::EvalInfo &info)
                                    info.size.x,
                                    info.size.y,
                                    "use_gpu",
-                                   info.use_gpu ? Py_True : Py_False);
+                                   info.use_gpu ? Py_True : Py_False,
+                                   "kind",
+                                   info.kind,
+                                   "is_animation_playing",
+                                   info.is_animation_playing ? Py_True : Py_False,
+                                   "frame_start",
+                                   info.frame_start,
+                                   "frame_end",
+                                   info.frame_end);
   PyObject *result = nullptr;
   if (kwargs) {
     PyObject *args = PyTuple_New(0);

@@ -142,6 +142,11 @@ struct Render : public BaseRender {
   short flag = 0;
   bool ok = false;
 
+  /* True if this render is used by the interactive compositor job (node editor backdrop). */
+  bool is_interactive_compositor = false;
+  /* True if the animation was playing when the interactive compositor job was scheduled. */
+  bool compositor_animation_playing = false;
+
   /* if render with single-layer option, other rendered layers are stored here */
   RenderResult *pushedresult = nullptr;
   /** A list of #RenderResults, for full-samples. */

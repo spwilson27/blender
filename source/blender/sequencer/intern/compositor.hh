@@ -44,6 +44,10 @@ class CompositorContext : public compositor::Context {
   {
     return true;
   }
+  compositor::EvaluationKind get_evaluation_kind() const override
+  {
+    return compositor::EvaluationKind::Sequencer;
+  }
   const Strip *get_strip() const override
   {
     return strip_;

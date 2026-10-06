@@ -186,6 +186,10 @@ struct ViewRender *RE_NewViewRender(struct RenderEngineType *engine_type);
  * RenderGlobal for more information. */
 struct Render *RE_NewInteractiveCompositorRender(const struct Scene *scene);
 
+/* Sets whether the animation was playing when the interactive compositor job of the given render
+ * was scheduled. This is exposed to Python compositor nodes. */
+void RE_compositor_animation_playing_set(struct Render *re, bool is_playing);
+
 /* Assign default dummy callbacks. */
 
 /**

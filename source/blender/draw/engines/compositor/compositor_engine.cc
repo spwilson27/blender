@@ -13,12 +13,15 @@
 #include "DNA_scene_types.h"
 #include "DNA_vec_types.h"
 #include "DNA_view3d_types.h"
+#include "DNA_windowmanager_types.h"
 
+#include "BKE_main.hh"
 #include "BKE_node.hh"
 #include "BKE_node_runtime.hh"
 
 #include "DEG_depsgraph_query.hh"
 
+#include "ED_screen.hh"
 #include "ED_view3d.hh"
 
 #include "DRW_gpu_wrapper.hh"
@@ -87,6 +90,17 @@ class Context : public compositor::Context {
    * viewport. But in case the camera region is not entirely visible in the viewport, the data size
    * of the domain will only cover the intersection of the viewport and the camera regions, while
    * the display size will cover the virtual extension of the camera region. */
+  compositor::EvaluationKind get_evaluation_kind() const override
+  {
+    return compositor::EvaluationKind::Viewport;
+  }
+
+  bool is_animation_playing() const override
+  {
+    const wmWindowManager *wm = static_cast<const wmWindowManager *>(main_->wm.first);
+    return wm && ED_window_animation_playing_no_scrub(wm) != nullptr;
+  }
+
   compositor::Domain get_compositing_domain() const override
   {
     const DRWContext *draw_ctx = DRW_context_get();

@@ -60,6 +60,11 @@ nodes::eval_log::NodesEvalLog *Context::nodes_evaluation_log() const
   return nullptr;
 }
 
+bool Context::is_animation_playing() const
+{
+  return false;
+}
+
 void Context::evaluate_operation_post() const {}
 
 bool Context::is_canceled() const
