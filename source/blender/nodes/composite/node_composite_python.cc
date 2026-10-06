@@ -29,6 +29,7 @@
 #include "COM_utilities.hh"
 
 #include "NOD_composite_python.hh"
+#include "NOD_eval_log.hh"
 #include "NOD_menu_value.hh"
 
 namespace blender::nodes::compositor_python {
@@ -320,6 +321,37 @@ class PythonNodeOperation : public NodeOperation {
     this->context().set_info_message(std::string(this->node().name) + ": " + std::string(message));
   }
 
+  /* Show the messages reported by Python as node warnings, and as the info message of the
+   * context. Errors are reported separately, as the info message. */
+  void forward_messages(const Span<compositor_python::ReportMessage> messages) const
+  {
+    using compositor_python::ReportMessage;
+    if (messages.is_empty()) {
+      return;
+    }
+
+    if (nodes::eval_log::NodesEvalLog *log = this->context().nodes_evaluation_log()) {
+      nodes::eval_log::NodeTreeLogger &tree_logger = log->get_local_tree_logger(
+          this->get_compute_context());
+      for (const ReportMessage &message : messages) {
+        const NodeWarningType type = message.level == ReportMessage::Level::Warning ?
+                                         NodeWarningType::Warning :
+                                         NodeWarningType::Info;
+        tree_logger.node_warnings.append(*tree_logger.allocator,
+                                         {this->node().identifier, {type, message.text}});
+      }
+    }
+
+    /* The most severe message wins, the latest one among those of the same severity. */
+    const ReportMessage *shown = nullptr;
+    for (const ReportMessage &message : messages) {
+      if (!shown || message.level >= shown->level) {
+        shown = &message;
+      }
+    }
+    this->report_message(shown->text);
+  }
+
   void execute_cpu(const Callbacks &callbacks)
   {
     const bool use_gpu = this->context().use_gpu();
@@ -399,8 +431,15 @@ class PythonNodeOperation : public NodeOperation {
     }
 
     std::string error;
-    const bool success = callbacks.evaluate(
-        this->node(), EvalMode::CPU, inputs, outputs, this->get_eval_info(domain), error);
+    Vector<compositor_python::ReportMessage> messages;
+    const bool success = callbacks.evaluate(this->node(),
+                                            EvalMode::CPU,
+                                            inputs,
+                                            outputs,
+                                            this->get_eval_info(domain),
+                                            messages,
+                                            error);
+    this->forward_messages(messages);
 
     if (success) {
       for (const SingleValueOutput &single_output : single_value_outputs) {
@@ -496,8 +535,15 @@ class PythonNodeOperation : public NodeOperation {
     }
 
     std::string error;
-    const bool success = callbacks.evaluate(
-        this->node(), EvalMode::GPU, inputs, outputs, this->get_eval_info(domain), error);
+    Vector<compositor_python::ReportMessage> messages;
+    const bool success = callbacks.evaluate(this->node(),
+                                            EvalMode::GPU,
+                                            inputs,
+                                            outputs,
+                                            this->get_eval_info(domain),
+                                            messages,
+                                            error);
+    this->forward_messages(messages);
 
     /* Python is expected to leave no shader bound, but make sure that is the case, and that the
      * writes to the output textures are visible to the operations that consume them. */

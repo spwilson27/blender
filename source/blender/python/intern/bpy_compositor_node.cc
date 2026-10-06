@@ -19,6 +19,8 @@
 
 #include "BLI_implicit_sharing.hh"
 #include "BLI_span.hh"
+#include "BLI_string.h"
+#include "BLI_vector.hh"
 
 #include "BKE_node.hh"
 #include "BKE_node_runtime.hh"
@@ -340,7 +342,71 @@ static bool function_accepts_context(PyObject *func)
   return result;
 }
 
-static PyObject *eval_info_to_py(const compositor_python::EvalInfo &info)
+/* Collects the messages of `context.report` during an evaluation. It is owned by a capsule that
+ * is referenced by the `report` function, so it stays valid for as long as that function lives,
+ * but it only accepts messages while `is_open` is true. */
+struct ReportCollector {
+  bool is_open = true;
+  Vector<compositor_python::ReportMessage> messages;
+};
+
+static const char *report_capsule_name = "bpy_compositor.report_collector";
+
+static void report_capsule_destructor(PyObject *capsule)
+{
+  delete static_cast<ReportCollector *>(PyCapsule_GetPointer(capsule, report_capsule_name));
+}
+
+static PyObject *compositor_report(PyObject *capsule, PyObject *args, PyObject *kwds)
+{
+  static const char *kwlist[] = {"message", "level", nullptr};
+  const char *message = nullptr;
+  const char *level = "INFO";
+  if (!PyArg_ParseTupleAndKeywords(
+          args, kwds, "s|s:report", const_cast<char **>(kwlist), &message, &level))
+  {
+    return nullptr;
+  }
+
+  ReportCollector *collector = static_cast<ReportCollector *>(
+      PyCapsule_GetPointer(capsule, report_capsule_name));
+  if (!collector) {
+    return nullptr;
+  }
+  if (!collector->is_open) {
+    PyErr_SetString(PyExc_RuntimeError,
+                    "context.report: can only be called during the evaluation of the node");
+    return nullptr;
+  }
+
+  compositor_python::ReportMessage report;
+  if (STREQ(level, "INFO")) {
+    report.level = compositor_python::ReportMessage::Level::Info;
+  }
+  else if (STREQ(level, "WARNING")) {
+    report.level = compositor_python::ReportMessage::Level::Warning;
+  }
+  else {
+    PyErr_Format(
+        PyExc_ValueError, "context.report: level must be 'INFO' or 'WARNING', not '%s'", level);
+    return nullptr;
+  }
+  report.text = message;
+  if (collector->messages.size() < compositor_python::MAX_REPORT_MESSAGES) {
+    collector->messages.append(std::move(report));
+  }
+  Py_RETURN_NONE;
+}
+
+static PyMethodDef compositor_report_def = {
+    "report",
+    reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)()>(compositor_report)),
+    METH_VARARGS | METH_KEYWORDS,
+    "report(message, level='INFO')\n\n"
+    "Report a non-fatal message, shown as a warning on the node. Level is 'INFO' or 'WARNING'. "
+    "Only valid during the evaluation."};
+
+static PyObject *eval_info_to_py(const compositor_python::EvalInfo &info, PyObject *report_capsule)
 {
   PyObject *types = PyImport_ImportModule("types");
   if (!types) {
@@ -379,6 +445,14 @@ static PyObject *eval_info_to_py(const compositor_python::EvalInfo &info)
     Py_DECREF(kwargs);
   }
   Py_DECREF(ns_type);
+  if (result) {
+    /* The function holds its own reference to the capsule. */
+    PyObject *report = PyCFunction_New(&compositor_report_def, report_capsule);
+    if (!report || PyObject_SetAttrString(result, "report", report) == -1) {
+      Py_CLEAR(result);
+    }
+    Py_XDECREF(report);
+  }
   return result;
 }
 
@@ -493,6 +567,7 @@ static bool compositor_evaluate(const bNode &node,
                                 const Span<SocketValue> inputs,
                                 const Span<SocketValue> outputs,
                                 const compositor_python::EvalInfo &info,
+                                Vector<compositor_python::ReportMessage> &r_messages,
                                 std::string &r_error)
 {
   PyGILState_STATE gilstate = PyGILState_Ensure();
@@ -501,6 +576,8 @@ static bool compositor_evaluate(const bNode &node,
   PyObject *py_inputs = nullptr;
   PyObject *py_outputs = nullptr;
   PyObject *py_result = nullptr;
+  PyObject *report_capsule = nullptr;
+  ReportCollector *report_collector = nullptr;
 
   /* The type of GPU textures is only initialized once the `gpu` module was imported. */
   PyObject *gpu_types = (mode == EvalMode::GPU) ? PyImport_ImportModule("gpu.types") : nullptr;
@@ -521,7 +598,16 @@ static bool compositor_evaluate(const bNode &node,
       PyObject *method = PyObject_GetAttrString(self, evaluate_method_name(mode));
       if (method) {
         if (function_accepts_context(method)) {
-          PyObject *py_context = eval_info_to_py(info);
+          /* The capsule owns the collector and can outlive this call if Python retains the
+           * report function. */
+          report_collector = new ReportCollector();
+          report_capsule = PyCapsule_New(
+              report_collector, report_capsule_name, report_capsule_destructor);
+          if (!report_capsule) {
+            delete report_collector;
+            report_collector = nullptr;
+          }
+          PyObject *py_context = report_capsule ? eval_info_to_py(info, report_capsule) : nullptr;
           if (py_context) {
             py_result = PyObject_CallFunctionObjArgs(
                 method, py_inputs, py_outputs, py_context, nullptr);
@@ -535,6 +621,14 @@ static bool compositor_evaluate(const bNode &node,
       }
     }
   }
+
+  if (report_collector) {
+    /* Calling the report function after this point raises an error. The messages are moved out
+     * so they are not shared with Python once the evaluation is over. */
+    report_collector->is_open = false;
+    r_messages = std::move(report_collector->messages);
+  }
+  Py_XDECREF(report_capsule);
 
   const bool success = py_result != nullptr;
   if (success) {

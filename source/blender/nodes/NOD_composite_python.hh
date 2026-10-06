@@ -82,6 +82,14 @@
  *   the state at draw time, for `'RENDER'` and `'SEQUENCER'` it is always false.
  * - `frame_start`, `frame_end`: int, the render frame range (`scene.frame_start` / `frame_end`)
  *   of the scene the compositor context evaluates.
+ * - `report(message, level='INFO')`: a function to report a non-fatal message while still
+ *   producing output. `level` is `'INFO'` or `'WARNING'` (anything else raises `ValueError`).
+ *   After the evaluation the messages are shown as node warnings (Info/Warning) on the node in
+ *   the node editor, when the evaluation has a node evaluation log (the node editor backdrop and
+ *   render), and the most severe, latest message is also set as the info message of the
+ *   compositor (prefixed with the node name). At most #MAX_REPORT_MESSAGES are kept per
+ *   evaluation. The function is only valid during the call of the method: calling it afterwards
+ *   (for example from a retained reference) raises `RuntimeError`.
  *
  * Methods with three parameters are called exactly as before, and so are methods whose 4th
  * parameter has a default value and another name (for example `_orig=_orig`), which keeps its
@@ -109,6 +117,7 @@
 #include "BLI_math_vector_types.hh"
 #include "BLI_span.hh"
 #include "BLI_string_ref.hh"
+#include "BLI_vector.hh"
 
 #include "BKE_node.hh"
 
@@ -150,6 +159,19 @@ struct EvalInfo {
   /* The render frame range of the evaluated scene. */
   int frame_start = 1;
   int frame_end = 250;
+};
+
+/** The maximum number of messages that are kept per evaluation of a node. */
+constexpr int MAX_REPORT_MESSAGES = 64;
+
+/** A message reported by Python through `context.report`. */
+struct ReportMessage {
+  enum class Level {
+    Info,
+    Warning,
+  };
+  Level level = Level::Info;
+  std::string text;
 };
 
 /** A value passed to, or retrieved from, the Python evaluation function of a node. */
@@ -201,13 +223,15 @@ struct Callbacks {
   bool (*is_single_value_output)(const bke::bNodeType &ntype, StringRefNull identifier);
   /**
    * Call the method of the given mode. Returns false and fills `r_error` if Python raised an
-   * exception. Both spans contain one entry per available input/output socket respectively.
+   * exception. Messages reported through `context.report` are appended to `r_messages`, also on
+   * failure. Both spans contain one entry per available input/output socket respectively.
    */
   bool (*evaluate)(const bNode &node,
                    EvalMode mode,
                    Span<SocketValue> inputs,
                    Span<SocketValue> outputs,
                    const EvalInfo &info,
+                   Vector<ReportMessage> &r_messages,
                    std::string &r_error);
 };
 
