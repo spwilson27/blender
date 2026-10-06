@@ -37,6 +37,7 @@
 #include "bpy.hh"
 #include "bpy_audaspace.hh"
 #include "bpy_capi_utils.hh"
+#include "bpy_compositor_node.hh"
 #include "bpy_intern_string.hh"
 #include "bpy_path.hh"
 #include "bpy_props.hh"
@@ -640,6 +641,8 @@ void BPY_python_start(bContext *C, int argc, const char **argv)
 
   pyrna_alloc_types();
 
+  BPY_compositor_node_callbacks_register();
+
 #ifndef WITH_PYTHON_MODULE
   /* Python module runs `atexit` when `bpy` is freed. */
   BPY_atexit_register(); /* This can initialize any time. */
@@ -664,6 +667,8 @@ void BPY_python_end(const bool do_python_exit)
 
   /* Finalizing, no need to grab the state, except when we are a module. */
   PyGILState_STATE gilstate = PyGILState_Ensure();
+
+  BPY_compositor_node_callbacks_unregister();
 
   /* Frees the Python-driver name-space & cached data. */
   BPY_driver_exit();

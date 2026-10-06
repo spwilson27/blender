@@ -112,6 +112,7 @@ set(SRC
   nodes/node_composite_vector_blur.cc
   nodes/node_composite_viewer.cc
 
+  node_composite_python.cc
   node_composite_tree.cc
   node_composite_util.cc
 

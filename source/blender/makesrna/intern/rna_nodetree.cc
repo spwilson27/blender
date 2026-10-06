@@ -32,6 +32,7 @@
 #include "RNA_enum_types.hh"
 
 #include "NOD_common.hh"
+#include "NOD_composite_python.hh"
 
 #include "rna_internal.hh"
 #include "rna_internal_types.hh"
@@ -2462,6 +2463,8 @@ static StructRNA *rna_CompositorNode_register(Main *bmain,
   if (!nt) {
     return nullptr;
   }
+
+  nodes::compositor_python::node_type_init(*nt);
 
   bke::node_register_type(*nt);
 

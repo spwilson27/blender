@@ -4,6 +4,7 @@
 
 set(INC
   ..
+  ../../compositor
   ../../editors/include
   ../../imbuf/intern/oiio
   ../../makesrna
@@ -34,6 +35,7 @@ set(SRC
   bpy_audaspace.cc
   bpy_capi_utils.cc
   bpy_cli_command.cc
+  bpy_compositor_node.cc
   bpy_driver.cc
   bpy_driver_bytecode.cc
   bpy_geometry_set.cc
@@ -87,6 +89,7 @@ set(SRC
   bpy_audaspace.hh
   bpy_capi_utils.hh
   bpy_cli_command.hh
+  bpy_compositor_node.hh
   bpy_driver.hh
   bpy_driver_bytecode.hh
   bpy_geometry_set.hh

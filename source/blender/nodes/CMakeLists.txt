@@ -119,6 +119,7 @@ set(SRC
   NOD_caller_ui.hh
   NOD_common.hh
   NOD_composite.hh
+  NOD_composite_python.hh
   NOD_compositor_gizmos.hh
   NOD_compositor_nodes_caller_ui.hh
   NOD_compositor_nodes_srna.hh
