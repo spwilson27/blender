@@ -568,6 +568,40 @@ void rna_NodeSocketStandard_int_range(
   *softmax = dval->max;
 }
 
+/* Soft slider range stored on node instance sockets (as opposed to interface sockets). Setting
+ * one bound past the other drags the other bound along so that min <= max always holds. */
+static void rna_NodeSocketStandard_float_min_set(PointerRNA *ptr, float value)
+{
+  bNodeSocketValueFloat *dval = static_cast<bNodeSocketValueFloat *>(
+      ptr->data_as<bNodeSocket>()->default_value);
+  dval->min = value;
+  dval->max = std::max(dval->max, value);
+}
+
+static void rna_NodeSocketStandard_float_max_set(PointerRNA *ptr, float value)
+{
+  bNodeSocketValueFloat *dval = static_cast<bNodeSocketValueFloat *>(
+      ptr->data_as<bNodeSocket>()->default_value);
+  dval->max = value;
+  dval->min = std::min(dval->min, value);
+}
+
+static void rna_NodeSocketStandard_int_min_set(PointerRNA *ptr, int value)
+{
+  bNodeSocketValueInt *dval = static_cast<bNodeSocketValueInt *>(
+      ptr->data_as<bNodeSocket>()->default_value);
+  dval->min = value;
+  dval->max = std::max(dval->max, value);
+}
+
+static void rna_NodeSocketStandard_int_max_set(PointerRNA *ptr, int value)
+{
+  bNodeSocketValueInt *dval = static_cast<bNodeSocketValueInt *>(
+      ptr->data_as<bNodeSocket>()->default_value);
+  dval->max = value;
+  dval->min = std::min(dval->min, value);
+}
+
 void rna_NodeSocketStandard_vector_range(
     PointerRNA *ptr, float *min, float *max, float *softmin, float *softmax)
 {
@@ -1145,6 +1179,22 @@ static void rna_def_node_socket_float(BlenderRNA *brna,
   RNA_def_property_update(prop, NC_NODE | NA_EDITED, "rna_NodeSocketStandard_value_update");
   RNA_def_property_flag(prop, PROP_CONTEXT_UPDATE);
 
+  prop = RNA_def_property(srna, "min_value", PROP_FLOAT, PROP_NONE);
+  RNA_def_property_float_sdna(prop, nullptr, "min");
+  RNA_def_property_float_funcs(prop, nullptr, "rna_NodeSocketStandard_float_min_set", nullptr);
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_ui_text(
+      prop, "Minimum Value", "Lower end of the slider (soft) range of the default value");
+  RNA_def_property_update(prop, NC_NODE | NA_EDITED, nullptr);
+
+  prop = RNA_def_property(srna, "max_value", PROP_FLOAT, PROP_NONE);
+  RNA_def_property_float_sdna(prop, nullptr, "max");
+  RNA_def_property_float_funcs(prop, nullptr, "rna_NodeSocketStandard_float_max_set", nullptr);
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_ui_text(
+      prop, "Maximum Value", "Upper end of the slider (soft) range of the default value");
+  RNA_def_property_update(prop, NC_NODE | NA_EDITED, nullptr);
+
   RNA_def_struct_sdna_from(srna, "bNodeSocket", nullptr);
 }
 
@@ -1249,6 +1299,22 @@ static void rna_def_node_socket_int(BlenderRNA *brna,
   RNA_def_property_ui_description_func(prop, "rna_NodeSocketStandard_description_func");
   RNA_def_property_update(prop, NC_NODE | NA_EDITED, "rna_NodeSocketStandard_value_update");
   RNA_def_property_flag(prop, PROP_CONTEXT_UPDATE);
+
+  prop = RNA_def_property(srna, "min_value", PROP_INT, PROP_NONE);
+  RNA_def_property_int_sdna(prop, nullptr, "min");
+  RNA_def_property_int_funcs(prop, nullptr, "rna_NodeSocketStandard_int_min_set", nullptr);
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_ui_text(
+      prop, "Minimum Value", "Lower end of the slider (soft) range of the default value");
+  RNA_def_property_update(prop, NC_NODE | NA_EDITED, nullptr);
+
+  prop = RNA_def_property(srna, "max_value", PROP_INT, PROP_NONE);
+  RNA_def_property_int_sdna(prop, nullptr, "max");
+  RNA_def_property_int_funcs(prop, nullptr, "rna_NodeSocketStandard_int_max_set", nullptr);
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_ui_text(
+      prop, "Maximum Value", "Upper end of the slider (soft) range of the default value");
+  RNA_def_property_update(prop, NC_NODE | NA_EDITED, nullptr);
 
   RNA_def_struct_sdna_from(srna, "bNodeSocket", nullptr);
 }
